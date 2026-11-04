@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Craft Collab Suite</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --line: #d9dce3; --text: #1d2230; --muted: #5d6475;
+      --docs: #2b57c8; --sheets: #17703d; --slides: #b4470f;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #15171c; --card: #1f2229; --line: #333845; --text: #e8eaf0; --muted: #a3a9b8; --docs: #8aa8ff; --sheets: #5fd394; --slides: #ff9a62; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; font: 15px/1.5 system-ui, sans-serif; color: var(--text); background: var(--bg); }
+    main { max-width: 880px; margin: 0 auto; padding: 48px 16px; }
+    h1 { font-size: 28px; margin: 0 0 4px; }
+    p.lead { color: var(--muted); margin: 0 0 28px; }
+    .apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    a.app { display: block; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: inherit; text-decoration: none; }
+    a.app:hover, a.app:focus-visible { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    a.app strong { display: block; font-size: 18px; color: var(--accent); }
+    a.app span { color: var(--muted); font-size: 14px; }
+    .docs { --accent: var(--docs); } .sheets { --accent: var(--sheets); } .slides { --accent: var(--slides); }
+    form { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); }
+    input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Craft Collab Suite</h1>
+    <p class="lead">Craft Docs, Craft Sheets and Craft Slides, co-edited in the browser. Open the same document in two windows to see each other's edits.</p>
+    <div class="apps">
+      <a class="app docs" data-app="docs" href="collab.html?app=docs"><strong>Craft Docs</strong><span>Documents: Word-style writing, track changes and comments</span></a>
+      <a class="app sheets" data-app="sheets" href="collab.html?app=sheets"><strong>Craft Sheets</strong><span>Workbooks: formulas, charts and pivot tables</span></a>
+      <a class="app slides" data-app="slides" href="collab.html?app=slides"><strong>Craft Slides</strong><span>Presentations: slides, shapes and slide shows</span></a>
+    </div>
+    <form id="options">
+      <label>Document <input id="doc" value="demo" size="12"></label>
+      <label>Role
+        <select id="role">
+          <option value="edit">Edit</option>
+          <option value="suggest">Suggest</option>
+          <option value="comment">Comment</option>
+          <option value="view">View</option>
+        </select>
+      </label>
+    </form>
+    <footer>By <a href="https://hossamtaha.me">Hossam Taha</a> · <a href="https://github.com/hossamTahaHussein/craft-collab-suite">Source on GitHub</a></footer>
+  </main>
+  <script type="module">
+    const doc = document.querySelector('#doc');
+    const role = document.querySelector('#role');
+    function update() {
+      for (const a of document.querySelectorAll('a.app')) {
+        const q = new URLSearchParams({ app: a.dataset.app, doc: doc.value.trim() || 'demo', role: role.value });
+        a.href = `collab.html?${q}`;
+      }
+    }
+    doc.addEventListener('input', update);
+    role.addEventListener('change', update);
+    update();
+  </script>
+</body>
+</html>
