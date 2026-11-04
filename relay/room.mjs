@@ -310,7 +310,7 @@ export class Room {
   /** `member` opens the document (there is none yet); revision 0 is its snapshot. */
   bootstrap(member) {
     this.bootstrapper = member.client;
-    member.send({ t: 'Welcome', rev: 0, snapshot: null, ops: [], you: member.client, peers: this.peersOf(member.client), role: member.role, app: this.appId });
+    member.send({ t: 'Welcome', rev: 0, snapshot: null, ops: [], you: member.client, peers: this.peersOf(member.client), role: member.role, user: member.user, app: this.appId });
   }
 
   /** The lowest palette index no present member uses. */
@@ -341,9 +341,9 @@ export class Room {
   welcome(member, haveRev) {
     const base = this.snapshot?.rev ?? 0;
     if (Number.isInteger(haveRev) && haveRev >= base && haveRev <= this.durableRev) {
-      member.send({ t: 'Welcome', rev: haveRev, snapshot: null, ops: this.durableAfter(haveRev), you: member.client, peers: this.peersOf(member.client), role: member.role, app: this.appId });
+      member.send({ t: 'Welcome', rev: haveRev, snapshot: null, ops: this.durableAfter(haveRev), you: member.client, peers: this.peersOf(member.client), role: member.role, user: member.user, app: this.appId });
     } else {
-      member.send({ t: 'Welcome', ...this.fromSnapshot(member), you: member.client, peers: this.peersOf(member.client), role: member.role, app: this.appId });
+      member.send({ t: 'Welcome', ...this.fromSnapshot(member), you: member.client, peers: this.peersOf(member.client), role: member.role, user: member.user, app: this.appId });
     }
   }
 
@@ -545,6 +545,18 @@ export class Room {
   /** Give an allowed edit the next revision; broadcast it once it is on disk. */
   sequence(member, msg) {
     const { t: _t, rev: _rev, user: _user, ...fields } = msg;
+    // An edit is made under its sender's name (their join token's), which every replica records
+    // with it (comments, suggestions): only the HTTP API's command this replica was asked to run
+    // carries the API's author.
+    if (fields.ctx && typeof fields.ctx === 'object') {
+      const ctx = { ...fields.ctx };
+      const asked = ctx.api === true && [...this.asks.values()].some((a) => a.client === member.client && a.author === ctx.author);
+      if (!asked) {
+        ctx.author = member.user;
+        delete ctx.api;
+      }
+      fields.ctx = ctx;
+    }
     const op = { t: 'Op', ...fields, client: member.client, rev: this.rev + 1, user: member.user };
     const needs = this.needs(msg);
     this.log.push(op);
@@ -667,7 +679,7 @@ export class Room {
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = this.setTimer(() => this.settle(id, new ApiError(504, 'The editor did not answer in time')), timeoutMs);
-      this.asks.set(id, { client: holder.client, answer: ANSWERS[msg.t], resolve, reject, timer });
+      this.asks.set(id, { client: holder.client, answer: ANSWERS[msg.t], author: msg.author, resolve, reject, timer });
       holder.send({ ...msg, id });
     });
   }

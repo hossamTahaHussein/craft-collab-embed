@@ -231,3 +231,16 @@ test("each app's command lists are read from its own files", () => {
   assert.ok(APPS.sheets.suggest.has('cell.set') && !APPS.sheets.suggest.has('home.insertRows'));
   assert.ok(APPS.slides.suggest.has('shape.move') && !APPS.slides.suggest.has('slide.move'));
 });
+
+test("an edit is made under its sender's token name, and only the API's own command carries the API's author", async () => {
+  const ed = await opened('sheets', 'stamp');
+  const s = await opened('sheets', 'stamp', { role: 'suggest' });
+  s.m.send(op(1, 'cell.set', SHEET_SEL, { ctx: { track: true, author: 'Someone Else' } }));
+  const got = await ed.m.next('Op');
+  assert.notEqual(got.ctx.author, 'Someone Else', 'the claimed name is replaced by the token name');
+  s.m.send(op(2, 'cell.set', SHEET_SEL, { ctx: { track: true, author: 'API', api: true } }));
+  const second = await ed.m.next('Op');
+  assert.ok(!second.ctx.api && second.ctx.author !== 'API', 'no API command was asked of it');
+  ed.m.ws.close();
+  s.m.ws.close();
+});

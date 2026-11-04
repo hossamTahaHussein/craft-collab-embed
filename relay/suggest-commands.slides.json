@@ -40,5 +40,8 @@
   "slide.duplicate",
   "slide.delete",
   "slide.hide",
-  "slide.layout"
+  "slide.layout",
+  "text.compose",
+  "text.commit",
+  "text.deleteSurrounding"
 ]
