@@ -6,13 +6,15 @@
 //               (optional: RELAY_API_KEY for the HTTP API, WEBHOOK_URL + WEBHOOK_SECRET for webhooks)
 // In a server:  const relay = await createRelay({ secret, dataDir, server: httpServer });
 //
-// The first message on a connection must be { t: "hello", token, client, haveRev?, agent? }
-// (`agent: true` for a program such as an MCP agent: never the autosave lease holder).
+// The first message on a connection must be { t: "hello", token, client, haveRev?, agent?, app? }
+// (`agent: true` for a program such as an MCP agent: never the autosave lease holder; `app`,
+// protocol v3: the editor, 'docs' | 'sheets' | 'slides', which must be the token's).
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { APPS, fromRoomKey, roomKey } from './apps.mjs';
 import { ApiError, Room } from './room.mjs';
 import { createStore } from './store.mjs';
 import { TokenError, verifyToken } from './token.mjs';
@@ -25,15 +27,45 @@ const CLIENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_HELLO_BYTES = 16 * 1024;
 const PING_EVERY_MS = 30_000;
 const API_TIMEOUT_MS = 15_000;
-/** What GET /api/docs/:doc/content can produce. */
+/** What GET /api/<app>/:doc/content can produce, per app (the editors' `document_file`), and
+ * each app's default. `txt` is what the `text` endpoint answers: Craft Docs' text, Craft Sheets'
+ * sheets as CSV, Craft Slides' outline. */
 const FORMATS = {
-  txt: 'text/plain; charset=utf-8',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  pdf: 'application/pdf',
-  html: 'text/html; charset=utf-8',
-  md: 'text/markdown; charset=utf-8',
-  odt: 'application/vnd.oasis.opendocument.text',
-  rtf: 'application/rtf',
+  docs: {
+    default: 'docx',
+    types: {
+      txt: 'text/plain; charset=utf-8',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      pdf: 'application/pdf',
+      html: 'text/html; charset=utf-8',
+      md: 'text/markdown; charset=utf-8',
+      odt: 'application/vnd.oasis.opendocument.text',
+      rtf: 'application/rtf',
+    },
+  },
+  sheets: {
+    default: 'xlsx',
+    types: {
+      txt: 'text/plain; charset=utf-8',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      csv: 'text/csv; charset=utf-8',
+      tsv: 'text/tab-separated-values; charset=utf-8',
+      json: 'application/json; charset=utf-8',
+      html: 'text/html; charset=utf-8',
+      pdf: 'application/pdf',
+    },
+  },
+  slides: {
+    default: 'pptx',
+    types: {
+      txt: 'text/plain; charset=utf-8',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      deckcraft: 'application/zip',
+      pdf: 'application/pdf',
+      png: 'image/png',
+      rtf: 'application/rtf',
+    },
+  },
 };
 /** Messages an editor may send carrying a whole document (up to MAX_SNAPSHOT_BYTES); the rest,
  * and everything from other roles, are ops-sized. */
@@ -104,17 +136,20 @@ export async function createRelay({ secret, dataDir, server, port, host = '127.0
   }, PING_EVERY_MS);
   heartbeat.unref?.();
 
-  /** The room `id`, loaded from disk unless it is in memory. A room nobody is in is let go
-   * after `limits.idleEvictMs` (and loaded again when next needed). */
-  async function roomFor(id) {
+  /** The room of document `doc` of `app`, loaded from disk unless it is in memory. A room nobody
+   * is in is let go after `limits.idleEvictMs` (and loaded again when next needed). */
+  async function roomFor(app, doc) {
+    const id = roomKey(app, doc);
     for (;;) {
       let entry = rooms.get(id);
       if (!entry) {
-        const events = !hooks ? undefined : (type, detail) => (type === 'edited' ? hooks.edited(id, detail.rev, detail.name) : hooks.send(id, type, detail));
+        const events = !hooks
+          ? undefined
+          : (type, detail) => (type === 'edited' ? hooks.edited(doc, detail.rev, detail.name, app) : hooks.send(doc, type, detail, app));
         const onIdle = (room) => {
           if (rooms.get(id)?.room === room) rooms.delete(id);
         };
-        const room = new Room({ id, store, events, limits, onIdle });
+        const room = new Room({ id, app, store, events, limits, onIdle });
         entry = { room, ready: room.load() };
         rooms.set(id, entry);
       }
@@ -145,28 +180,32 @@ export async function createRelay({ secret, dataDir, server, port, host = '127.0
     if (!apiKey) throw new ApiError(404, 'Not found');
     const auth = req.headers.authorization || '';
     if (!auth.startsWith('Bearer ') || !sameSecret(auth.slice(7), apiKey)) throw new ApiError(401, 'This needs the relay API key');
-    const route = /^\/api\/docs\/([^/]+)(?:\/(content|text|commands|kick|close))?$/.exec(url.pathname);
-    const action = route?.[2] ?? 'info';
+    // /api/docs/… (Craft Docs, as before v3), /api/sheets/… or /api/slides/….
+    const route = /^\/api\/(docs|sheets|slides)\/([^/]+)(?:\/(content|text|commands|kick|close))?$/.exec(url.pathname);
+    const app = route?.[1];
+    const action = route?.[3] ?? 'info';
     const method = { info: 'GET', content: 'GET', text: 'GET', commands: 'POST', kick: 'POST', close: 'POST' }[action];
     if (!route || req.method !== method) throw new ApiError(404, 'Not found');
     let doc;
     try {
-      doc = decodeURIComponent(route[1]);
+      doc = decodeURIComponent(route[2]);
     } catch {
       throw new ApiError(400, 'Bad document id');
     }
-    if (!rooms.has(doc) && !(await store.exists(doc))) throw new ApiError(404, 'No such document');
-    const room = await roomFor(doc);
+    const id = roomKey(app, doc);
+    if (!rooms.has(id) && !(await store.exists(id))) throw new ApiError(404, 'No such document');
+    const room = await roomFor(app, doc);
     switch (action) {
       case 'info':
-        return json(res, 200, { doc, rev: room.rev, savedRev: room.savedRev, lastSaved: room.lastSaved, people: room.people() });
+        return json(res, 200, { doc, app, rev: room.rev, savedRev: room.savedRev, lastSaved: room.lastSaved, people: room.people() });
       case 'content':
       case 'text': {
-        const format = action === 'text' ? 'txt' : url.searchParams.get('format') || 'docx';
-        if (!Object.hasOwn(FORMATS, format)) throw new ApiError(400, `format must be one of ${Object.keys(FORMATS).join(', ')}`);
+        const formats = FORMATS[app].types;
+        const format = action === 'text' ? 'txt' : url.searchParams.get('format') || FORMATS[app].default;
+        if (!Object.hasOwn(formats, format)) throw new ApiError(400, `format must be one of ${Object.keys(formats).join(', ')}`);
         const reply = await room.ask({ t: 'Export', format }, apiTimeoutMs);
         if (!reply.ok || typeof reply.data !== 'string') throw new ApiError(422, typeof reply.error === 'string' ? reply.error : 'The editor could not export the document');
-        const headers = { 'Content-Type': FORMATS[format] };
+        const headers = { 'Content-Type': formats[format] };
         if (action === 'content') headers['Content-Disposition'] = `attachment; filename="${doc.replace(/[^\x20-\x7e]|["\\]/g, '_')}.${format}"`;
         res.writeHead(200, headers);
         return res.end(Buffer.from(reply.data, 'base64'));
@@ -225,7 +264,13 @@ export async function createRelay({ secret, dataDir, server, port, host = '127.0
         } catch (e) {
           return close(4401, e instanceof TokenError ? `Not allowed: ${e.code}` : 'Not allowed');
         }
-        const r = await roomFor(claims.doc);
+        // Protocol v3: the editor says which app it is; an older one is Craft Docs.
+        const app = msg.app ?? 'docs';
+        if (app !== claims.app) {
+          const named = (a) => APPS[a]?.name ?? `"${String(a).slice(0, 20)}"`;
+          return close(4400, `This join token is for ${named(claims.app)}, not ${named(app)}`);
+        }
+        const r = await roomFor(claims.app, claims.doc);
         if (ws.readyState !== ws.OPEN) return;
         room = r;
         me = { client, sub: claims.sub, user: claims.name, role: claims.role, send, close };
@@ -252,8 +297,12 @@ export async function createRelay({ secret, dataDir, server, port, host = '127.0
     get port() {
       return server.address()?.port;
     },
-    /** The documents whose rooms are in memory. */
-    loadedRooms: () => [...rooms.keys()],
+    /** The documents whose rooms are in memory (Craft Docs' by id, the others' as `app:doc`). */
+    loadedRooms: () =>
+      [...rooms.keys()].map((key) => {
+        const { app, doc } = fromRoomKey(key);
+        return app === 'docs' ? doc : `${app}:${doc}`;
+      }),
     async close() {
       clearInterval(heartbeat);
       hooks?.close();
@@ -279,5 +328,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     apiKey: process.env.RELAY_API_KEY,
     webhook: { url: process.env.WEBHOOK_URL, secret: process.env.WEBHOOK_SECRET },
   });
-  console.log(`WordCraft relay on ws://${process.env.HOST || '127.0.0.1'}:${relay.port}/relay`);
+  console.log(`Craft Collab relay on ws://${process.env.HOST || '127.0.0.1'}:${relay.port}/relay`);
 }

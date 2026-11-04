@@ -496,3 +496,108 @@ test('reconnecting backs off until a connection is welcomed, not just opened', a
   assert.equal(made.length, 4, 'welcomed: back to 20 ms');
   editor.destroy();
 });
+
+// craft-collab-embed 2.0: one SDK for Craft Docs, Craft Sheets and Craft Slides.
+
+async function setupApp(app, options = {}) {
+  const { CraftEditor } = await import('../src/craft-collab-embed.js');
+  const page = fakePage();
+  const { FakeWS, made } = fakeSockets();
+  const prefix = { docs: 'wordcraft', sheets: 'gridcraft', slides: 'deckcraft' }[app];
+  const editor = new CraftEditor('#e', {
+    app,
+    readyTimeout: 5000,
+    callTimeout: 2000,
+    collab: { url: 'ws://localhost:8080/relay', token: 'tok-1', WebSocket: FakeWS, retryMs: [5, 20] },
+    ...options,
+  });
+  page.fromEditor({ type: `${prefix}:ready`, version: '2.0.0' });
+  await tick();
+  return { page, made, editor, frame: page.frames[0], prefix };
+}
+
+test("each app's editor is framed from its own folder and talks in its own messages", async () => {
+  for (const [app, folder] of [
+    ['docs', '/wordcraft/'],
+    ['sheets', '/craft-sheets/'],
+    ['slides', '/craft-slides/'],
+  ]) {
+    const { frame, editor, made, page, prefix } = await setupApp(app);
+    assert.equal(new URL(frame.src).pathname, folder);
+    assert.equal(frame.title, { docs: 'Craft Docs editor', sheets: 'Craft Sheets editor', slides: 'Craft Slides editor' }[app]);
+    made[0].open();
+    await tick();
+    assert.equal(made[0].sent[0].app, app, 'the relay hears which app it is');
+    made[0].relay({ t: 'Welcome', rev: 1, snapshot: '{}', ops: [], you: 'x' });
+    assert.ok(frame.posted.some((m) => m.type === `${prefix}:collab`));
+    page.fromEditor({ type: `${prefix}:collab`, msg: '{"t":"Op","seq":1}' });
+    assert.deepEqual(made[0].sent.at(-1), { t: 'Op', seq: 1 });
+    // Another app's messages are not this editor's.
+    const other = prefix === 'wordcraft' ? 'gridcraft' : 'wordcraft';
+    page.fromEditor({ type: `${other}:collab`, msg: '{"t":"Op","seq":2}' });
+    assert.deepEqual(made[0].sent.at(-1), { t: 'Op', seq: 1 });
+    editor.destroy();
+  }
+});
+
+test('Sheets and Slides helpers call their editor; other apps are told they are not theirs', async () => {
+  const { editor, frame, page } = await setupApp('sheets');
+  const join = (rev) => page.fromEditor({ type: 'gridcraft:collab.status', pending: 0, rev, people: 1 });
+  join(1);
+  const reading = editor.getRange('A1:B2', { sheet: 'Data' });
+  await tick();
+  const call = frame.posted.find((m) => m.type === 'gridcraft:call');
+  assert.deepEqual([call.method, call.params], ['getRange', { range: 'A1:B2', sheet: 'Data' }]);
+  page.fromEditor({ type: 'gridcraft:result', id: call.id, ok: true, result: [[1, 2]] });
+  assert.deepEqual(await reading, [[1, 2]]);
+  await assert.rejects(editor.slides(), /slides is for Craft Slides, not Craft Sheets/);
+  const file = editor.getDocument();
+  await tick();
+  const get = frame.posted.filter((m) => m.type === 'gridcraft:call').at(-1);
+  assert.deepEqual(get.params, { format: 'xlsx' }, 'a workbook by default');
+  page.fromEditor({ type: 'gridcraft:result', id: get.id, ok: true, name: 'Book.xlsx', bytes: new Uint8Array([80, 75]).buffer });
+  assert.equal((await file).blob.type, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  editor.destroy();
+  const s = await setupApp('slides');
+  s.page.fromEditor({ type: 'deckcraft:collab.status', pending: 0, rev: 1, people: 1 });
+  const going = s.editor.goToSlide(2);
+  await tick();
+  const go = s.frame.posted.find((m) => m.type === 'deckcraft:call');
+  assert.deepEqual([go.method, go.params], ['goToSlide', { index: 2 }]);
+  s.page.fromEditor({ type: 'deckcraft:result', id: go.id, ok: true, result: {} });
+  await going;
+  await assert.rejects(s.editor.getRange('A1'), /getRange is for Craft Sheets, not Craft Slides/);
+  s.editor.destroy();
+});
+
+test("a relay that turns the editor away for the wrong app says so, and doesn't reconnect", async () => {
+  const { editor, made } = await setupApp('slides');
+  const errors = [];
+  editor.addEventListener('error', (e) => errors.push(e.detail.error));
+  made[0].open();
+  made[0].drop(4400, 'This join token is for Craft Sheets, not Craft Slides');
+  await tick(40);
+  assert.equal(made.length, 1, 'no reconnect');
+  assert.match(errors[0].message, /for Craft Sheets, not Craft Slides/);
+  editor.destroy();
+});
+
+test('an unknown app is refused, and the 1.x names are Craft Docs', async () => {
+  const { CraftEditor, WordCraftEditor: Old, mimeType } = await import('../src/craft-collab-embed.js');
+  fakePage();
+  assert.throws(() => new CraftEditor('#e', { app: 'paint' }), /app must be one of docs, sheets, slides/);
+  const old = new Old('#e', { app: 'sheets', readyTimeout: 5000 });
+  assert.equal(old.app, 'docs');
+  old.destroy();
+  assert.equal(mimeType('deck.pptx'), 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  assert.equal(mimeType('data.csv'), 'text/csv');
+});
+
+test('with no document to open, a co-editing editor is told to share what it has open', async () => {
+  const { frame, editor } = await setupApp('sheets');
+  assert.equal(new URL(frame.src).searchParams.get('collabNew'), '1');
+  editor.destroy();
+  const withFile = await setup();
+  assert.equal(new URL(withFile.frame.src).searchParams.get('collabNew'), null);
+  withFile.editor.destroy();
+});

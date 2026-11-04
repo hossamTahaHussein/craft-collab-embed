@@ -74,6 +74,7 @@ test('GET a document: revision, saves and who is here', async () => {
   assert.match(res.headers.get('content-type'), /^application\/json/);
   assert.deepEqual(await res.json(), {
     doc: 'info doc',
+    app: 'docs',
     rev: 1,
     savedRev: 0,
     lastSaved: null,

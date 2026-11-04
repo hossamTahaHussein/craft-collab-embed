@@ -3,3 +3,7 @@ editor/
 examples/files/
 .wordcraft-web-*/
 examples/relay-data/
+editor-sheets/
+editor-slides/
+.craft-sheets-web-*/
+.craft-slides-web-*/

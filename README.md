@@ -1,36 +1,63 @@
-# wordcraft-embed
+# craft-collab-embed
 
-Put a full Word-style editor in any website, and let people write in it together. Users open, edit
-and save `.docx` files in the page, several people (and AI agents) can edit one document at once,
-and your site decides where the files go.
+Put a full Word-, Excel- or PowerPoint-style editor in any website, and let people work in it
+together. Users open, edit and save `.docx`, `.xlsx` and `.pptx` files in the page, several people
+(and AI agents) can edit one file at once, and your site decides where the files go.
 
-Version 1.0.2, by [Hossam Taha](https://hossamtaha.me).
+Version 2.0.0, by [Hossam Taha](https://hossamtaha.me).
 
 <img src="docs/images/coediting.png" alt="Three people in one document: Bob Diaz types with his name flag above his caret, Cara Ng has two words selected, and the header shows their avatars and All changes saved" width="100%">
 
-The editor is [WordCraft Collab](https://github.com/hossamTahaHussein/wordcraft-collab): a
-modified version of the open-source [WordCraft](https://github.com/storytold/wordcraft) by the
-ArtCraft team (MIT OR Apache-2.0), a Word reimplementation in Rust that runs in the browser through
-WebAssembly. WordCraft covers the ribbon, styles, tables, track changes, comments, references, mail
-merge, and .docx/.odt/.rtf/.md/.html/PDF; WordCraft Collab adds real-time co-editing, a fully
-mirrored Arabic interface, and the APIs below. This package adds the pieces that turn it into an
-embeddable component:
+The editors are [Craft Collab Suite](https://github.com/hossamTahaHussein/craft-collab-suite)'s:
+**Craft Docs**, **Craft Sheets** and **Craft Slides**, modified versions of the open-source
+[WordCraft](https://github.com/storytold/wordcraft), [GridCraft](https://github.com/storytold/gridcraft)
+and [DeckCraft](https://github.com/storytold/deckcraft) by the ArtCraft team (MIT OR Apache-2.0),
+reimplementations in Rust that run in the browser through WebAssembly. The suite adds real-time
+co-editing, Suggesting, fully mirrored Arabic interfaces, and the APIs below. This package adds the
+pieces that turn them into embeddable components:
 
 | | |
 |---|---|
-| Co-editing | Named carets and selections, presence, autosave, offline editing that syncs back, undo of your own edits, Suggesting per person, edit/suggest/comment/view roles, version history |
-| Arabic | A translated, mirrored interface, Arabic spell checking, right to left in every format, searchable Arabic PDFs |
+| Co-editing | Named carets, cells and shapes, presence, autosave, offline editing that syncs back, undo of your own edits, Suggesting per person, edit/suggest/comment/view roles, version history; the same in all three editors |
+| Arabic | Translated, mirrored interfaces, Arabic spell checking, right to left in every format, searchable Arabic PDFs |
 | Integrations | A JavaScript API and events in the page, the relay's HTTP API and signed webhooks on your server, and AI agents that join documents over MCP |
 
 <img src="docs/images/arabic.png" alt="The Arabic interface with the ribbon mirrored and two people editing an Arabic document" width="100%">
 
 | Path | What it is |
 |---|---|
-| `src/wordcraft-embed.js` | The SDK: a `WordCraftEditor` class and a `<wordcraft-editor>` tag. No dependencies, about 13 KB |
-| `src/wordcraft-embed.d.ts` | TypeScript types |
-| `scripts/fetch-editor.mjs` | Downloads the WordCraft web build into `editor/` and checks its SHA-256 against the release |
-| `editor/` | The editor itself: a static site (`index.html`, `.js`, `.wasm`). It has no server code |
-| `examples/` | A demo site with a file list and server saving, a one-tag page, a React wrapper, and a Node server |
+| `src/craft-collab-embed.js` | The SDK: `createEditor(el, {app})`, a `CraftEditor` class and a `<craft-editor app="docs\|sheets\|slides">` tag (`WordCraftEditor` and `<wordcraft-editor>` still work). No dependencies |
+| `src/craft-collab-embed.d.ts` | TypeScript types |
+| `scripts/fetch-editor.mjs` | Downloads the three web builds into `editor/`, `editor-sheets/` and `editor-slides/` and checks their SHA-256 against the release |
+| `editor/`, `editor-sheets/`, `editor-slides/` | The editors themselves: static sites (`index.html`, `.js`, `.wasm`). They have no server code |
+| `relay/` | The co-editing relay: one server for all three editors |
+| `examples/` | A demo site with a file list and server saving, `suite.html` (the three editors co-edited), a one-tag page, a React wrapper, and a Node server |
+
+## Craft Sheets and Craft Slides
+
+The same SDK, relay and server API serve all three editors; `app` picks one:
+
+```js
+import { createEditor } from '/sdk/craft-collab-embed.js';
+const sheet = createEditor('#editor', { app: 'sheets', src: '/craft-sheets/', document: '/files/budget.xlsx' });
+await sheet.setRange('B2', [[1200, 980], [640, 640]]);
+console.log(await sheet.getRange('A1:C3'));
+const deck = createEditor('#deck', { app: 'slides', src: '/craft-slides/' });
+await deck.goToSlide(2);
+```
+
+| | Craft Docs | Craft Sheets | Craft Slides |
+|---|---|---|---|
+| Token `app` claim | `docs` (the default) | `sheets` | `slides` |
+| HTTP API | `/api/docs/<doc>` | `/api/sheets/<doc>` | `/api/slides/<doc>` |
+| `getDocument` and `content` formats | docx, odt, rtf, html, md, txt, pdf | xlsx, csv, tsv, json, html, pdf | pptx, deckcraft, pdf, png, txt, rtf |
+| Extra page calls | `insertText`, `inspect` | `getRange`, `setRange`, `getSelection`, `activeSheet` | `slides`, `goToSlide`, `getSelection` |
+| Suggesting | text, formatting, tables | cells' contents and formatting | slides, shapes and their text |
+| Agent | `wordcraft-cli collab-mcp` | `gridcraft-cli collab-mcp` | `deckcraft-cli collab-mcp` |
+
+A join token names its app: an editor of another app is turned away with the reason, and each
+app's documents are rooms of their own, so `report` in Craft Docs and `report` in Craft Sheets are
+two documents. `craft-suite-cli --app docs|sheets|slides collab-mcp …` runs the right agent.
 
 ## How it works
 
@@ -201,7 +228,7 @@ a few seconds after typing stops, through the same `onSave`.
 It needs three things:
 
 1. **A co-editing build of WordCraft** in place of the official `editor/`. Build the `co-editing`
-   branch of [wordcraft-collab](https://github.com/hossamTahaHussein/wordcraft-collab) (`cd apps/wordcraft-web && trunk build --release`) and serve
+   branch of [wordcraft-collab](https://github.com/hossamTahaHussein/craft-collab-suite) (`cd apps/wordcraft-web && trunk build --release`) and serve
    its `dist/web` as `/wordcraft/`. The official release ignores `collab`.
 2. **The relay** (`relay/server.mjs`, Node 18+, one dependency: `ws`). It never reads documents;
    it puts edits in order, keeps the session and its versions on disk (`DATA_DIR`) and chooses
@@ -394,7 +421,7 @@ revision, waiting for it), `comment` and `reply`.
   paid once per version.
 - **Browsers:** WebGPU or WebGL2 is required (any current Chrome, Edge, Firefox or Safari). WebGPU
   needs HTTPS or `localhost`. Elsewhere the editor falls back to WebGL2 on its own.
-- **Maturity:** WordCraft Collab 1.0 is the first release of the co-editing fork, on top of WordCraft, which is still young. Test it with your real documents before you rely on it.
+- **Maturity:** Craft Collab Suite 2.0 is the first release with Craft Sheets and Craft Slides, on top of WordCraft, GridCraft and DeckCraft, which are still young. Test it with your real files before you rely on it.
 
 ## Updating the editor
 
@@ -402,15 +429,17 @@ revision, waiting for it), `comment` and `reply`.
 node scripts/fetch-editor.mjs latest     # or a version: node scripts/fetch-editor.mjs 1.0.2
 ```
 
-Releases come from [wordcraft-collab](https://github.com/hossamTahaHussein/wordcraft-collab/releases).
+Releases come from [craft-collab-suite](https://github.com/hossamTahaHussein/craft-collab-suite/releases).
 
-Pin the version you tested in `package.json` (`"wordcraftVersion"`).
+Pin the version you tested in `package.json` (`"craftVersion"`).
 
 ## License
 
-The SDK, the relay and the examples are MIT OR Apache-2.0, the same as WordCraft, and are by
-[Hossam Taha](https://hossamtaha.me). The `editor/` folder is the WordCraft Collab web build, with
-its own `LICENSE-*`, `NOTICE`, `ATTRIBUTION.md` and font licenses (OFL). Ship those files with it.
-WordCraft Collab is based on WordCraft, Copyright (c) 2026 ArtCraft Team and the WordCraft
-contributors; it is independent and not endorsed by the ArtCraft team, and the ArtCraft name and
-logos are not used. Microsoft Word is a trademark of Microsoft; WordCraft is not affiliated with it.
+The SDK, the relay and the examples are MIT OR Apache-2.0, the same as WordCraft, GridCraft and
+DeckCraft, and are by [Hossam Taha](https://hossamtaha.me). The `editor/`, `editor-sheets/` and
+`editor-slides/` folders are Craft Collab Suite's web builds, each with its own `LICENSE-*`,
+`NOTICE`, `ATTRIBUTION.md` and font licenses (OFL). Ship those files with them. Craft Docs, Craft
+Sheets and Craft Slides are based on WordCraft, GridCraft and DeckCraft, Copyright (c) 2026
+ArtCraft Team and their contributors; they are independent and not endorsed by the ArtCraft team,
+and the ArtCraft name and logos are not used. Microsoft Word, Excel and PowerPoint are trademarks
+of Microsoft; the suite is not affiliated with it.

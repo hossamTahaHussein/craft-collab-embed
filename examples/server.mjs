@@ -8,13 +8,14 @@
 //   node examples/server.mjs            # http://127.0.0.1:8080 (this machine only)
 //   PORT=3000 FILES_DIR=./docs node examples/server.mjs
 //   HOST=0.0.0.0 node examples/server.mjs   # other machines too (the demo has no logins)
-//   EDITOR_DIR=../upstream/dist/web node examples/server.mjs   # a co-editing build of WordCraft
+//   EDITOR_DIR=../upstream/dist/web node examples/server.mjs   # a local build of Craft Docs
+//   SHEETS_DIR=… SLIDES_DIR=…   # local builds of Craft Sheets and Craft Slides (default editor-sheets/, editor-slides/)
 //
-// Co-editing (examples/collab.html): the relay listens on /relay of this same server, and
-// GET /api/token?doc=…&name=…&role=… hands out join tokens. A real site issues tokens only to
+// Co-editing (examples/collab.html, ?app=sheets|slides for the other editors): the relay listens
+// on /relay of this same server, and GET /api/token?app=…&doc=…&name=…&role=… hands out join tokens. A real site issues tokens only to
 // signed-in users, from its own backend, with a secret it keeps (RELAY_SECRET).
 //
-//   RELAY_API_KEY=…  turns on the relay's HTTP API (/api/docs/…) on this server
+//   RELAY_API_KEY=…  turns on the relay's HTTP API (/api/docs/…, /api/sheets/…, /api/slides/…) on this server
 //   WEBHOOK_URL=… WEBHOOK_SECRET=…  turn on the relay's webhooks
 
 import { randomBytes } from 'node:crypto';
@@ -25,23 +26,31 @@ import { createGzip } from 'node:zlib';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRelay } from '../relay/server.mjs';
-import { ROLES, issueToken } from '../relay/token.mjs';
+import { APPS, ROLES, issueToken } from '../relay/token.mjs';
 
 const root = resolve(fileURLToPath(import.meta.url), '../..');
 const port = Number(process.env.PORT) || 8080;
 const host = process.env.HOST || '127.0.0.1';
 const filesDir = resolve(process.env.FILES_DIR || join(root, 'examples', 'files'));
 const editorDir = resolve(process.env.EDITOR_DIR || join(root, 'editor'));
+const sheetsDir = resolve(process.env.SHEETS_DIR || join(root, 'editor-sheets'));
+const slidesDir = resolve(process.env.SLIDES_DIR || join(root, 'editor-slides'));
 const relaySecret = process.env.RELAY_SECRET || randomBytes(32).toString('hex');
 const relayDir = resolve(process.env.RELAY_DATA_DIR || join(root, 'examples', 'relay-data'));
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
-const DOCUMENT_EXTENSIONS = new Set(['.docx', '.docm', '.dotx', '.doc', '.odt', '.rtf', '.pdf', '.html', '.md', '.tex', '.txt', '.png']);
+const DOCUMENT_EXTENSIONS = new Set([
+  '.docx', '.docm', '.dotx', '.doc', '.odt', '.rtf', '.pdf', '.html', '.md', '.tex', '.txt', '.png',
+  '.xlsx', '.xlsm', '.xls', '.ods', '.csv', '.tsv', '.json',
+  '.pptx', '.ppsx', '.potx', '.ppt', '.odp', '.deckcraft',
+]);
 
 mkdirSync(filesDir, { recursive: true });
 
 // URL prefix → folder.
 const mounts = [
   ['/wordcraft/', editorDir],
+  ['/craft-sheets/', sheetsDir],
+  ['/craft-slides/', slidesDir],
   ['/sdk/', join(root, 'src')],
   ['/', join(root, 'examples')],
 ];
@@ -180,7 +189,8 @@ function token(req, res) {
   const doc = (q.get('doc') || 'demo').slice(0, 100);
   const name = (q.get('name') || 'Guest').slice(0, 60);
   const role = ROLES.includes(q.get('role')) ? q.get('role') : 'edit';
-  const t = issueToken(relaySecret, { doc, sub: `${name}-${randomBytes(4).toString('hex')}`, name, role });
+  const app = APPS.includes(q.get('app')) ? q.get('app') : 'docs';
+  const t = issueToken(relaySecret, { doc, sub: `${name}-${randomBytes(4).toString('hex')}`, name, role, app });
   send(res, 200, JSON.stringify({ token: t }), 'application/json');
 }
 
@@ -192,7 +202,7 @@ async function route(req, res) {
     return send(res, 400, 'Bad request URL');
   }
   if (pathname === '/api/token') return token(req, res);
-  if (pathname.startsWith('/api/docs/') && relay.handle(req, res)) return;
+  if (/^\/api\/(docs|sheets|slides)\//.test(pathname) && relay.handle(req, res)) return;
   if (pathname === '/api/files' || pathname.startsWith('/api/files/')) {
     return files(req, res, pathname.slice('/api/files/'.length));
   }
