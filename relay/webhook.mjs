@@ -1,7 +1,7 @@
 // Webhooks: the relay tells your server what happens in its documents (someone joined, left,
 // edited, commented, a save landed, a version was restored) by POSTing signed JSON to WEBHOOK_URL.
 //
-//   POST <WEBHOOK_URL>   { event, doc, at, delivery, ...detail }
+//   POST <WEBHOOK_URL>   { event, doc, app, at, delivery, ...detail }   (app: 'docs' | 'sheets' | 'slides')
 //   X-WordCraft-Event: <event>
 //   X-WordCraft-Delivery: <uuid, the same on every retry of one delivery: dedupe on it>
 //   X-WordCraft-Timestamp: <unix seconds>
@@ -126,16 +126,19 @@ export function createWebhooks({
     log(`relay: webhook ${event} given up after ${retryMs.length + 1} attempts`);
   }
 
-  function send(doc, event, detail = {}) {
-    const s = stateOf(doc);
+  /** `app` (protocol v3): the editor whose document it is; the deliveries of each app's
+   * documents queue apart. */
+  function send(doc, event, detail = {}, app = 'docs') {
+    const key = app === 'docs' ? doc : `\u0001${app}\u0001${doc}`;
+    const s = stateOf(key);
     const id = randomUUID();
-    const body = JSON.stringify({ event, doc, at: new Date(now()).toISOString(), delivery: id, ...detail });
+    const body = JSON.stringify({ event, doc, app, at: new Date(now()).toISOString(), delivery: id, ...detail });
     if (s.queue.length >= maxPending) {
       s.queue.shift();
       if (!s.dropped++) log(`relay: webhooks for ${doc} are ${maxPending} behind; dropping the oldest waiting ones`);
     }
     s.queue.push({ event, id, body });
-    if (!s.busy) drain(doc, s);
+    if (!s.busy) drain(key, s);
   }
 
   return {
@@ -145,8 +148,8 @@ export function createWebhooks({
     /** How many documents the sender holds anything for. */
     documents: () => docs.size,
     /** `name` made revision `rev`: an `edited` event goes out at most every 5 s, after the first. */
-    edited(doc, rev, name) {
-      const s = stateOf(doc);
+    edited(doc, rev, name, app = 'docs') {
+      const s = stateOf(app === 'docs' ? doc : `\u0001${app}\u0001${doc}`);
       s.rev = Math.max(s.rev, rev);
       s.people.add(name);
       if (s.timer) return;
@@ -154,7 +157,7 @@ export function createWebhooks({
         s.timer = null;
         const people = [...s.people];
         s.people.clear();
-        send(doc, 'edited', { rev: s.rev, people });
+        send(doc, 'edited', { rev: s.rev, people }, app);
       }, editedEveryMs);
     },
     /** Stop the waiting `edited` timers (the relay is closing). */

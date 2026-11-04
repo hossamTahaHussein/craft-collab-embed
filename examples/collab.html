@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WordCraft co-editing demo</title>
+  <title>Craft Collab co-editing demo</title>
   <style>
     :root { --line: #d9dce3; --muted: #5d6475; --accent: #2b47b5; color-scheme: light; }
     * { box-sizing: border-box; }
@@ -29,17 +29,20 @@
   <main><div id="editor"></div></main>
 
   <script type="module">
-    import { WordCraftEditor } from '/sdk/wordcraft-embed.js';
+    import { createEditor } from '/sdk/craft-collab-embed.js';
 
     const params = new URLSearchParams(location.search);
+    // ?app=sheets or ?app=slides for Craft Sheets or Craft Slides (Craft Docs by default).
+    const app = ['sheets', 'slides'].includes(params.get('app')) ? params.get('app') : 'docs';
+    const ext = { docs: 'docx', sheets: 'xlsx', slides: 'pptx' }[app];
     const doc = params.get('doc') || 'demo';
     const names = ['Ann', 'Bob', 'Chen', 'Dana', 'Eli', 'Fatma', 'Gus', 'Hiro'];
     const name = params.get('name') || names[Math.floor(Math.random() * names.length)];
-    const fileName = `${doc}.docx`;
+    const fileName = `${doc}.${ext}`;
     document.querySelector('#title').textContent = fileName;
     document.querySelector('#me').textContent = name;
     const other = names.filter((n) => n !== name)[Math.floor(Math.random() * (names.length - 1))];
-    document.querySelector('#another').href = `?doc=${encodeURIComponent(doc)}&name=${encodeURIComponent(other)}`;
+    document.querySelector('#another').href = `?app=${app}&doc=${encodeURIComponent(doc)}&name=${encodeURIComponent(other)}`;
 
     const status = document.querySelector('#status');
     let people = 1;
@@ -48,23 +51,25 @@
       status.className = kind;
     };
 
-    // A document that doesn't exist yet starts blank (before the editor might open it).
+    // A document that doesn't exist yet starts blank: a blank Word file, or the new workbook or
+    // presentation the editor starts with.
     const head = await fetch('/api/files/' + encodeURIComponent(fileName), { method: 'HEAD' });
-    if (!head.ok) {
+    let exists = head.ok;
+    if (!exists && app === 'docs') {
       const blank = await (await fetch('/blank.docx')).blob();
-      await fetch('/api/files/' + encodeURIComponent(fileName), { method: 'PUT', body: blank });
+      exists = (await fetch('/api/files/' + encodeURIComponent(fileName), { method: 'PUT', body: blank })).ok;
     }
 
-    const editor = new WordCraftEditor('#editor', {
-      src: '/wordcraft/',
+    const editor = createEditor('#editor', {
+      app,
       author: name,
       // Only the first person in the room opens this; everyone else gets the shared copy.
-      document: '/api/files/' + encodeURIComponent(fileName),
+      document: exists ? '/api/files/' + encodeURIComponent(fileName) : undefined,
       documentName: fileName,
       collab: {
         url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/relay`,
         // Your backend issues this for the signed-in user; the demo hands one to anyone.
-        token: async () => (await (await fetch(`/api/token?doc=${encodeURIComponent(doc)}&name=${encodeURIComponent(name)}`)).json()).token,
+        token: async () => (await (await fetch(`/api/token?app=${app}&doc=${encodeURIComponent(doc)}&name=${encodeURIComponent(name)}`)).json()).token,
       },
       // Autosave (a few seconds after typing stops) and Ctrl+S both land here.
       // The shared document is saved on the server (autosave, Ctrl+S); anything else the editor

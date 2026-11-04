@@ -7,7 +7,7 @@
 // do ('edit' | 'suggest' | 'comment' | 'view'), `agent` a program rather than a person (never the holder).
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { APPS } from './apps.mjs';
 
 export const LIMITS = {
   members: 50,
@@ -79,19 +79,9 @@ export function compactEdited(pairs, max) {
 const isEdited = (p) => Array.isArray(p) && Number.isSafeInteger(p[0]) && typeof p[1] === 'string';
 
 const OP_KINDS = new Set(['cmd', 'undo', 'redo', 'restore']);
-/** The commands a commenter may run (generated from the engine registry). */
-export const COMMENT_COMMANDS = new Set(JSON.parse(readFileSync(new URL('./comment-commands.json', import.meta.url), 'utf8')));
-/** What a suggester may run besides comments: the commands whose whole effect the engine records
- * as a tracked change (the engine's `SUGGEST_COMMANDS`, proved by a test that Reject All takes each back). */
-export const SUGGEST_COMMANDS = new Set(JSON.parse(readFileSync(new URL('./suggest-commands.json', import.meta.url), 'utf8')));
-/** The comment commands and the `commented` webhook action each one is. */
-const COMMENT_ACTIONS = {
-  'review.newComment': 'added',
-  'review.reply': 'replied',
-  'review.resolveComment': 'resolved',
-  'review.editComment': 'edited',
-  'review.deleteComment': 'deleted',
-};
+/** Craft Docs' commenter and suggester commands (each app's are in apps.mjs). */
+export const COMMENT_COMMANDS = APPS.docs.comment;
+export const SUGGEST_COMMANDS = APPS.docs.suggest;
 const REFUSED = {
   view: 'You can only view this document',
   comment: 'You can only comment on this document',
@@ -106,29 +96,11 @@ const MAY_UNDO = {
 };
 
 const PALETTE_SIZE = 12;
-/** The largest story part index and offset a replica can hold (u32). */
-const MAX_INDEX = 2 ** 32 - 1;
-const isIndex = (n) => isCount(n) && n <= MAX_INDEX;
 
-/** A selection as story offsets (wordcraft_collab::proto::Anchor). */
-function validSel(sel) {
-  return (
-    !!sel &&
-    typeof sel === 'object' &&
-    (sel.story === 'body' || (sel.story && typeof sel.story === 'object' && isIndex(sel.story.part))) &&
-    isIndex(sel.anchor) &&
-    isIndex(sel.head)
-  );
-}
-
-/** A selection with only the fields replicas read (nothing else is forwarded). */
-function cleanSel(sel) {
-  return { story: sel.story === 'body' ? 'body' : { part: sel.story.part }, anchor: sel.anchor, head: sel.head };
-}
-
-/** Whether `msg` has the shape of an op (wordcraft_collab::proto::Op); replicas can't decode one
- * that doesn't, and a revision nobody can apply would stall the document. */
-function wellFormed(msg) {
+/** Whether `msg` has the shape of an op (craft_collab_core::proto::Op) of app `app` (apps.mjs);
+ * replicas can't decode one that doesn't, and a revision nobody can apply would stall the
+ * document. */
+function wellFormed(msg, app) {
   return (
     isCount(msg.seq) &&
     msg.seq > 0 &&
@@ -136,7 +108,7 @@ function wellFormed(msg) {
     OP_KINDS.has(msg.kind) &&
     typeof msg.cmd === 'string' &&
     msg.cmd.length <= 200 &&
-    validSel(msg.sel) &&
+    app.validSel(msg.sel) &&
     !!msg.ctx &&
     typeof msg.ctx === 'object' &&
     !Array.isArray(msg.ctx)
@@ -151,8 +123,13 @@ export class Room {
    * op: { rev, name }), commented, restored. `onIdle(room)`: the room has had nobody in it and
    * nothing to do for `idleEvictMs`, everything on disk; the owner lets it go (a later lookup
    * loads it again). */
-  constructor({ id, store, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, limits = {}, events = () => {}, onIdle = null }) {
+  constructor({ id, app = 'docs', store, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, limits = {}, events = () => {}, onIdle = null }) {
     this.id = id;
+    /** Which editor this document is for: 'docs', 'sheets' or 'slides'. */
+    this.appId = app;
+    /** Its selections and role commands (apps.mjs). */
+    this.app = APPS[app];
+    if (!this.app) throw new Error(`no such app: ${app}`);
     this.events = events;
     this.onIdle = onIdle;
     this.evictTimer = null;
@@ -333,7 +310,7 @@ export class Room {
   /** `member` opens the document (there is none yet); revision 0 is its snapshot. */
   bootstrap(member) {
     this.bootstrapper = member.client;
-    member.send({ t: 'Welcome', rev: 0, snapshot: null, ops: [], you: member.client, peers: this.peersOf(member.client), role: member.role });
+    member.send({ t: 'Welcome', rev: 0, snapshot: null, ops: [], you: member.client, peers: this.peersOf(member.client), role: member.role, app: this.appId });
   }
 
   /** The lowest palette index no present member uses. */
@@ -364,9 +341,9 @@ export class Room {
   welcome(member, haveRev) {
     const base = this.snapshot?.rev ?? 0;
     if (Number.isInteger(haveRev) && haveRev >= base && haveRev <= this.durableRev) {
-      member.send({ t: 'Welcome', rev: haveRev, snapshot: null, ops: this.durableAfter(haveRev), you: member.client, peers: this.peersOf(member.client), role: member.role });
+      member.send({ t: 'Welcome', rev: haveRev, snapshot: null, ops: this.durableAfter(haveRev), you: member.client, peers: this.peersOf(member.client), role: member.role, app: this.appId });
     } else {
-      member.send({ t: 'Welcome', ...this.fromSnapshot(member), you: member.client, peers: this.peersOf(member.client), role: member.role });
+      member.send({ t: 'Welcome', ...this.fromSnapshot(member), you: member.client, peers: this.peersOf(member.client), role: member.role, app: this.appId });
     }
   }
 
@@ -456,9 +433,9 @@ export class Room {
   /** Where this person is: forwarded, kept for newcomers, never logged. `rev`: the confirmed
    * revision the selection is relative to, one the relay has stored. */
   presence(member, msg) {
-    if (!validSel(msg.sel) || !isCount(msg.rev) || msg.rev > this.durableRev) return;
+    if (!this.app.validSel(msg.sel) || !isCount(msg.rev) || msg.rev > this.durableRev) return;
     if (!this.take(member.presenceBucket, this.limits.presencePerSecond)) return;
-    member.sel = cleanSel(msg.sel);
+    member.sel = this.app.cleanSel(msg.sel);
     member.selRev = msg.rev;
     this.broadcast(this.peerOf(member, 'Presence'), member.client);
   }
@@ -471,11 +448,11 @@ export class Room {
       const allowed =
         msg.kind === 'undo' ||
         msg.kind === 'redo' ||
-        (msg.kind === 'cmd' && (COMMENT_COMMANDS.has(msg.cmd) || (msg.ctx?.track === true && SUGGEST_COMMANDS.has(msg.cmd))));
+        (msg.kind === 'cmd' && (this.app.comment.has(msg.cmd) || (msg.ctx?.track === true && this.app.suggest.has(msg.cmd))));
       if (!allowed) return REFUSED.suggest;
     }
     if (member.role === 'comment') {
-      const allowed = msg.kind === 'cmd' ? COMMENT_COMMANDS.has(msg.cmd) : msg.kind === 'undo' || msg.kind === 'redo';
+      const allowed = msg.kind === 'cmd' ? this.app.comment.has(msg.cmd) : msg.kind === 'undo' || msg.kind === 'redo';
       if (!allowed) return REFUSED.comment;
     }
     if (msg.kind === 'undo' || msg.kind === 'redo') {
@@ -498,8 +475,8 @@ export class Room {
    * the most any of its targets needs (so a redo of an undone comment is still a comment). */
   needs(msg) {
     if (msg.kind === 'cmd') {
-      if (COMMENT_COMMANDS.has(msg.cmd)) return 'comment';
-      return msg.ctx?.track === true && SUGGEST_COMMANDS.has(msg.cmd) ? 'suggest' : 'edit';
+      if (this.app.comment.has(msg.cmd)) return 'comment';
+      return msg.ctx?.track === true && this.app.suggest.has(msg.cmd) ? 'suggest' : 'edit';
     }
     if (msg.kind === 'undo' || msg.kind === 'redo') {
       const all = [msg.params?.target, ...(msg.params?.more ?? [])].map((t) => this.needed.get(t) ?? 'edit');
@@ -515,7 +492,7 @@ export class Room {
       this.held.push([member, msg]);
       return;
     }
-    if (!wellFormed(msg) || msg.base > this.rev) return;
+    if (!wellFormed(msg, this.app) || msg.base > this.rev) return;
     // A resent edit the relay already has (a reconnect raced its echo).
     if (msg.seq <= (this.lastSeq.get(member.client) ?? 0)) return;
     const reason = this.refusal(member, msg);
@@ -580,7 +557,8 @@ export class Room {
       this.durableRev = Math.max(this.durableRev, op.rev);
       for (const m of this.members.values()) m.send(op);
       this.events('edited', { rev: op.rev, name: op.user });
-      const action = op.kind === 'cmd' && Object.hasOwn(COMMENT_ACTIONS, op.cmd) && COMMENT_ACTIONS[op.cmd];
+      const actions = this.app.commentActions;
+      const action = op.kind === 'cmd' && Object.hasOwn(actions, op.cmd) && actions[op.cmd];
       if (action) this.events('commented', { action, by: op.user, rev: op.rev });
     });
     this.scheduleSave();

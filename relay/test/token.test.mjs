@@ -64,3 +64,12 @@ test('missing or bad claims are malformed', () => {
   assert.throws(() => issueToken(SECRET, { doc: 'd', sub: 'u', name: 'A', role: 'owner' }, NOW), TokenError);
   assert.throws(() => issueToken('short', { doc: 'd', sub: 'u', name: 'A', role: 'edit' }, NOW), TokenError);
 });
+
+test('the app claim names the editor (Craft Docs when left out) and a document id holds no control characters', () => {
+  assert.equal(verifyToken(SECRET, issueToken(SECRET, { doc: 'd', sub: 'u', name: 'A', role: 'edit' }, NOW), NOW + 1).app, 'docs');
+  for (const app of ['docs', 'sheets', 'slides']) {
+    assert.equal(verifyToken(SECRET, issueToken(SECRET, { doc: 'd', sub: 'u', name: 'A', role: 'edit', app }, NOW), NOW + 1).app, app);
+  }
+  assert.equal(code(() => issueToken(SECRET, { doc: 'd', sub: 'u', name: 'A', role: 'edit', app: 'paint' }, NOW)), 'malformed');
+  assert.equal(code(() => issueToken(SECRET, { doc: 'a\u0001b', sub: 'u', name: 'A', role: 'edit' }, NOW)), 'malformed');
+});

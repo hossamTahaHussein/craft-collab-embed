@@ -54,7 +54,7 @@ test('an event is POSTed as signed JSON that verifyWebhook accepts', async () =>
   assert.equal(method, 'POST');
   assert.equal(headers['content-type'], 'application/json');
   assert.equal(headers['x-wordcraft-event'], 'joined');
-  assert.deepEqual({ ...json, at: undefined }, { event: 'joined', doc: 'doc-1', at: undefined, delivery: headers['x-wordcraft-delivery'], sub: 'u1', name: 'Ann', role: 'edit' });
+  assert.deepEqual({ ...json, at: undefined }, { event: 'joined', doc: 'doc-1', app: 'docs', at: undefined, delivery: headers['x-wordcraft-delivery'], sub: 'u1', name: 'Ann', role: 'edit' });
   assert.ok(!Number.isNaN(Date.parse(json.at)));
   const ts = headers['x-wordcraft-timestamp'];
   assert.match(ts, /^\d+$/);
