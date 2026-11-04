@@ -156,6 +156,25 @@ test("a commenter runs that app's comment commands and nothing else", async () =
   }
 });
 
+test("a suggester runs that app's suggestable commands, tracked, and nothing else", async () => {
+  const cases = [
+    ['sheets', SHEET_SEL, 'cell.set', 'home.insertRows'],
+    ['slides', SLIDE_SEL, 'shape.move', 'slide.move'],
+  ];
+  for (const [app, sel, suggestable, structural] of cases) {
+    const ed = await opened(app, `suggest-${app}`);
+    const s = await opened(app, `suggest-${app}`, { role: 'suggest' });
+    s.m.send(op(1, suggestable, sel, { ctx: { track: true } }));
+    assert.equal((await ed.m.next('Op')).cmd, suggestable, `${app}: a tracked suggestion goes through`);
+    s.m.send(op(2, suggestable, sel));
+    assert.match((await s.m.next('Refused')).reason, /only suggest/, `${app}: untracked, it's refused`);
+    s.m.send(op(3, structural, sel, { ctx: { track: true } }));
+    assert.match((await s.m.next('Refused')).reason, /only suggest/, `${app}: ${structural} can't be suggested`);
+    ed.m.ws.close();
+    s.m.ws.close();
+  }
+});
+
 test("the HTTP API serves each app's documents in its own formats", async () => {
   const ed = await opened('sheets', 'book');
   assert.equal((await api('/api/docs/book')).status, 404, 'no Docs document of that id');
@@ -208,4 +227,7 @@ test("each app's command lists are read from its own files", () => {
   // The engines' lists (gridcraft_engine::collab / deckcraft_engine::collab::COMMENT_COMMANDS).
   assert.deepEqual([...APPS.sheets.comment], ['review.newComment', 'review.replyComment', 'review.deleteComment', 'review.resolveComment', 'review.newNote']);
   assert.deepEqual([...APPS.slides.comment], ['comment.add', 'comment.reply', 'comment.delete', 'comment.resolve']);
+  // The engines' suggestable commands (gridcraft_engine / deckcraft_engine::suggest::SUGGEST_COMMANDS).
+  assert.ok(APPS.sheets.suggest.has('cell.set') && !APPS.sheets.suggest.has('home.insertRows'));
+  assert.ok(APPS.slides.suggest.has('shape.move') && !APPS.slides.suggest.has('slide.move'));
 });
