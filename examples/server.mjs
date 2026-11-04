@@ -15,7 +15,7 @@
 // on /relay of this same server, and GET /api/token?app=…&doc=…&name=…&role=… hands out join tokens. A real site issues tokens only to
 // signed-in users, from its own backend, with a secret it keeps (RELAY_SECRET).
 //
-//   RELAY_API_KEY=…  turns on the relay's HTTP API (/api/docs/…) on this server
+//   RELAY_API_KEY=…  turns on the relay's HTTP API (/api/docs/…, /api/sheets/…, /api/slides/…) on this server
 //   WEBHOOK_URL=… WEBHOOK_SECRET=…  turn on the relay's webhooks
 
 import { randomBytes } from 'node:crypto';
@@ -202,7 +202,7 @@ async function route(req, res) {
     return send(res, 400, 'Bad request URL');
   }
   if (pathname === '/api/token') return token(req, res);
-  if (pathname.startsWith('/api/docs/') && relay.handle(req, res)) return;
+  if (/^\/api\/(docs|sheets|slides)\//.test(pathname) && relay.handle(req, res)) return;
   if (pathname === '/api/files' || pathname.startsWith('/api/files/')) {
     return files(req, res, pathname.slice('/api/files/'.length));
   }

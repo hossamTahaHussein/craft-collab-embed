@@ -131,7 +131,7 @@ async function toDocument(source, name, fallback = 'Document.docx') {
 }
 
 /** The editor page's URL with the host-mode query flags. */
-function editorUrl(src, { author, webgl, collab, docName, language }) {
+function editorUrl(src, { author, webgl, collab, docName, language, document: doc }) {
   const url = new URL(src, location.href);
   if (url.origin !== location.origin) {
     throw new Error(
@@ -146,6 +146,8 @@ function editorUrl(src, { author, webgl, collab, docName, language }) {
   if (collab) {
     url.searchParams.set('collab', '1');
     if (docName) url.searchParams.set('docName', docName);
+    // No file to open: if this person is the first, the editor shares what it has open.
+    if (doc == null) url.searchParams.set('collabNew', '1');
   }
   return url;
 }

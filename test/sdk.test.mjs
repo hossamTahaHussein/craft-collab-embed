@@ -592,3 +592,12 @@ test('an unknown app is refused, and the 1.x names are Craft Docs', async () => 
   assert.equal(mimeType('deck.pptx'), 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
   assert.equal(mimeType('data.csv'), 'text/csv');
 });
+
+test('with no document to open, a co-editing editor is told to share what it has open', async () => {
+  const { frame, editor } = await setupApp('sheets');
+  assert.equal(new URL(frame.src).searchParams.get('collabNew'), '1');
+  editor.destroy();
+  const withFile = await setup();
+  assert.equal(new URL(withFile.frame.src).searchParams.get('collabNew'), null);
+  withFile.editor.destroy();
+});

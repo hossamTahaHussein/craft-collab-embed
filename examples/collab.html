@@ -36,6 +36,8 @@
     const app = ['sheets', 'slides'].includes(params.get('app')) ? params.get('app') : 'docs';
     const ext = { docs: 'docx', sheets: 'xlsx', slides: 'pptx' }[app];
     const doc = params.get('doc') || 'demo';
+    // ?role=suggest|comment|view to see the other roles (the demo hands out any role).
+    const role = params.get('role') || 'edit';
     const names = ['Ann', 'Bob', 'Chen', 'Dana', 'Eli', 'Fatma', 'Gus', 'Hiro'];
     const name = params.get('name') || names[Math.floor(Math.random() * names.length)];
     const fileName = `${doc}.${ext}`;
@@ -69,7 +71,8 @@
       collab: {
         url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/relay`,
         // Your backend issues this for the signed-in user; the demo hands one to anyone.
-        token: async () => (await (await fetch(`/api/token?app=${app}&doc=${encodeURIComponent(doc)}&name=${encodeURIComponent(name)}`)).json()).token,
+        token: async () =>
+          (await (await fetch(`/api/token?app=${app}&doc=${encodeURIComponent(doc)}&name=${encodeURIComponent(name)}&role=${encodeURIComponent(role)}`)).json()).token,
       },
       // Autosave (a few seconds after typing stops) and Ctrl+S both land here.
       // The shared document is saved on the server (autosave, Ctrl+S); anything else the editor
@@ -92,6 +95,8 @@
       },
       onError: (error) => show(error.message, 'error'),
     });
+    // For the console (and the end-to-end tests): the editor's JavaScript API.
+    window.editor = editor;
     editor.addEventListener('collab', ({ detail }) => {
       people = detail.connected ? detail.people : 1;
       if (!detail.connected) show(detail.pending ? `Offline — ${detail.pending} edits will sync` : 'Reconnecting…', 'off');
