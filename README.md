@@ -8,7 +8,7 @@ Version 1.0.2, by [Hossam Taha](https://hossamtaha.me).
 
 <img src="docs/images/coediting.png" alt="Three people in one document: Bob Diaz types with his name flag above his caret, Cara Ng has two words selected, and the header shows their avatars and All changes saved" width="100%">
 
-The editor is [WordCraft Collab](https://github.com/hossamTahaHussein/wordcraft-collab): a
+The editor is [WordCraft Collab](https://github.com/hossamTahaHussein/craft-collab-suite): a
 modified version of the open-source [WordCraft](https://github.com/storytold/wordcraft) by the
 ArtCraft team (MIT OR Apache-2.0), a Word reimplementation in Rust that runs in the browser through
 WebAssembly. WordCraft covers the ribbon, styles, tables, track changes, comments, references, mail
@@ -201,7 +201,7 @@ a few seconds after typing stops, through the same `onSave`.
 It needs three things:
 
 1. **A co-editing build of WordCraft** in place of the official `editor/`. Build the `co-editing`
-   branch of [wordcraft-collab](https://github.com/hossamTahaHussein/wordcraft-collab) (`cd apps/wordcraft-web && trunk build --release`) and serve
+   branch of [wordcraft-collab](https://github.com/hossamTahaHussein/craft-collab-suite) (`cd apps/wordcraft-web && trunk build --release`) and serve
    its `dist/web` as `/wordcraft/`. The official release ignores `collab`.
 2. **The relay** (`relay/server.mjs`, Node 18+, one dependency: `ws`). It never reads documents;
    it puts edits in order, keeps the session and its versions on disk (`DATA_DIR`) and chooses
@@ -402,7 +402,7 @@ revision, waiting for it), `comment` and `reply`.
 node scripts/fetch-editor.mjs latest     # or a version: node scripts/fetch-editor.mjs 1.0.2
 ```
 
-Releases come from [wordcraft-collab](https://github.com/hossamTahaHussein/wordcraft-collab/releases).
+Releases come from [wordcraft-collab](https://github.com/hossamTahaHussein/craft-collab-suite/releases).
 
 Pin the version you tested in `package.json` (`"wordcraftVersion"`).
 
